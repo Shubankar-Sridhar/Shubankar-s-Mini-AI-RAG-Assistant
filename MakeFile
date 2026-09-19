@@ -1,0 +1,296 @@
+
+# Quick start:
+#   make setup      First-time setup (env, venv, node_modules, data dirs)
+#   make dev        Start all services locally (no Docker)
+#   make docker-up  Start the full stack in Docker
+
+
+SHELL := /bin/bash
+COMPOSE := docker compose -f docker/docker-compose.yml
+ROOT := $(shell pwd)
+
+BACKEND_PORT ?= 8000
+FRONTEND_PORT ?= 3000
+CHROMA_PORT ?= 8001
+REDIS_PORT ?= 6379
+OLLAMA_PORT ?= 11434
+
+RUN_DIR := .run
+BACKEND_PID := $(RUN_DIR)/backend.pid
+FRONTEND_PID := $(RUN_DIR)/frontend.pid
+
+CHROMA_CONTAINER := rag-chroma
+
+.DEFAULT_GOAL := help
+
+.PHONY: help \
+        env setup setup-backend setup-frontend setup-data \
+        dev dev-backend dev-frontend dev-chroma stop restart logs-backend logs-frontend \
+        docker-build docker-up docker-down docker-restart docker-logs docker-ps \
+        docker-shell-backend docker-shell-frontend \
+        ollama-pull ollama-shell \
+        health test test-backend \
+        clean clean-data nuke
+
+help:
+	@echo ""
+	@echo "Mini AI Knowledge Assistant — available commands"
+	@echo ""
+	@echo "  Setup"
+	@echo "    make env              Create .env from .env.example if missing"
+	@echo "    make setup            Full first-time setup"
+	@echo "    make setup-backend    Create venv and install Python deps"
+	@echo "    make setup-frontend   Install npm packages"
+	@echo ""
+	@echo "  Local development (no Docker for backend/frontend)"
+	@echo "    make dev              Start Chroma, backend, frontend"
+	@echo "    make dev-backend      Start backend only (foreground)"
+	@echo "    make dev-frontend     Start frontend only (foreground)"
+	@echo "    make dev-chroma       Start Chroma container only"
+	@echo "    make stop             Stop background dev processes"
+	@echo "    make restart          Stop then start dev"
+	@echo ""
+	@echo "  Docker"
+	@echo "    make docker-build     Build backend and frontend images"
+	@echo "    make docker-up        Start the full stack (detached)"
+	@echo "    make docker-down      Stop the full stack"
+	@echo "    make docker-restart   Rebuild and restart"
+	@echo "    make docker-logs      Tail logs from all containers"
+	@echo "    make docker-ps        Show container status"
+	@echo "    make docker-shell-backend    Open bash in the backend container"
+	@echo "    make docker-shell-frontend   Open sh in the frontend container"
+	@echo ""
+	@echo "  Ollama"
+	@echo "    make ollama-pull      Pull nomic-embed-text into the ollama container"
+	@echo "    make ollama-shell     Open a shell in the ollama container"
+	@echo ""
+	@echo "  Diagnostics"
+	@echo "    make health           Curl all service health endpoints"
+	@echo "    make logs-backend     Tail local backend log"
+	@echo "    make logs-frontend    Tail local frontend log"
+	@echo ""
+	@echo "  Testing and cleanup"
+	@echo "    make test             Run backend tests"
+	@echo "    make clean            Remove caches and build artifacts"
+	@echo "    make clean-data       Remove backend/data contents"
+	@echo "    make nuke             Remove everything including venv and .env"
+	@echo ""
+env:
+	@if [ ! -f .env ]; then \
+		cp .env.example .env; \
+		echo "Created .env from .env.example. Edit it to add API keys."; \
+	else \
+		echo ".env already exists — skipping."; \
+	fi
+setup-data:
+	@mkdir -p backend/data/uploads backend/data/parsed backend/data/chroma backend/data/bm25
+	@touch backend/data/uploads/.gitkeep backend/data/parsed/.gitkeep \
+	       backend/data/chroma/.gitkeep backend/data/bm25/.gitkeep
+	@echo "Data directories ready."
+
+setup-backend: env setup-data
+	@echo ">> Setting up backend..."
+	@if ! command -v java >/dev/null 2>&1; then \
+		echo "ERROR: Java 11+ is required (OpenDataLoader PDF shells out to java)."; \
+		echo "  Debian/Ubuntu:  sudo apt install -y openjdk-17-jre-headless"; \
+		echo "  Fedora/RHEL:    sudo dnf install -y java-17-openjdk-headless"; \
+		echo "  Arch:           sudo pacman -S jre17-openjdk-headless"; \
+		echo "  macOS:          brew install openjdk@17"; \
+		exit 1; \
+	fi
+	@cd backend && \
+		if [ ! -d venv ]; then python3 -m venv venv; fi && \
+		. venv/bin/activate && \
+		pip install --upgrade pip --quiet && \
+		pip install -r requirements.txt
+	@echo ">> Backend ready."
+
+setup-frontend:
+	@echo ">> Setting up frontend..."
+	@cd frontend && npm install
+	@echo ">> Frontend ready."
+
+setup: setup-backend setup-frontend
+	@echo ""
+	@echo "==================================================="
+	@echo "  Setup complete."
+	@echo "  Next: make dev          (local, no Docker)"
+	@echo "        make docker-up    (full stack in Docker)"
+	@echo "==================================================="
+
+dev: env setup-data stop
+	@mkdir -p $(RUN_DIR)
+	@echo ">> Ensuring Chroma container is running..."
+	@docker start $(CHROMA_CONTAINER) >/dev/null 2>&1 || \
+		(echo "   chroma container not found. Create it with:"; \
+		 echo "   docker run -d --name $(CHROMA_CONTAINER) --restart unless-stopped \\"; \
+		 echo "     -p $(CHROMA_PORT):8000 \\"; \
+		 echo "     -v \"\$$(pwd)/backend/data/chroma:/chroma/chroma\" \\"; \
+		 echo "     -e IS_PERSISTENT=TRUE -e ANONYMIZED_TELEMETRY=FALSE \\"; \
+		 echo "     chromadb/chroma:0.5.15"; \
+		 exit 1)
+	@for i in $$(seq 1 30); do \
+		if curl -sf http://localhost:$(CHROMA_PORT)/api/v1/heartbeat >/dev/null 2>&1; then \
+			echo "   Chroma ready."; break; \
+		fi; \
+		sleep 1; \
+	done
+	@echo ">> Starting backend..."
+	@cd backend && \
+		. venv/bin/activate && \
+		(uvicorn app.main:app --reload --host 0.0.0.0 --port $(BACKEND_PORT) \
+			> ../$(RUN_DIR)/backend.log 2>&1 & echo $$! > ../$(BACKEND_PID))
+	@for i in $$(seq 1 30); do \
+		if curl -sf http://localhost:$(BACKEND_PORT)/api/health >/dev/null 2>&1; then \
+			echo "   Backend ready."; break; \
+		fi; \
+		sleep 1; \
+	done
+	@echo ">> Starting frontend..."
+	@cd frontend && \
+		(npm run dev -- -p $(FRONTEND_PORT) \
+			> ../$(RUN_DIR)/frontend.log 2>&1 & echo $$! > ../$(FRONTEND_PID))
+	@for i in $$(seq 1 45); do \
+		if curl -sf -o /dev/null http://localhost:$(FRONTEND_PORT); then \
+			echo "   Frontend ready."; break; \
+		fi; \
+		sleep 1; \
+	done
+	@echo ""
+	@echo "==================================================="
+	@echo "  Frontend: http://localhost:$(FRONTEND_PORT)"
+	@echo "  Backend:  http://localhost:$(BACKEND_PORT)"
+	@echo "  API Docs: http://localhost:$(BACKEND_PORT)/docs"
+	@echo "  Chroma:   http://localhost:$(CHROMA_PORT)  (Docker)"
+	@echo "  Redis:    localhost:$(REDIS_PORT)          (Docker)"
+	@echo "  Ollama:   http://localhost:$(OLLAMA_PORT)  (Docker)"
+	@echo ""
+	@echo "  Logs:  make logs-backend | logs-frontend"
+	@echo "  Stop:  make stop"
+	@echo "==================================================="
+
+dev-backend:
+	@cd backend && . venv/bin/activate && \
+		uvicorn app.main:app --reload --host 0.0.0.0 --port $(BACKEND_PORT)
+
+dev-frontend:
+	@cd frontend && npm run dev -- -p $(FRONTEND_PORT)
+
+dev-chroma:
+	@docker start $(CHROMA_CONTAINER) >/dev/null 2>&1 || \
+		docker run -d --name $(CHROMA_CONTAINER) --restart unless-stopped \
+			-p $(CHROMA_PORT):8000 \
+			-v "$(ROOT)/backend/data/chroma:/chroma/chroma" \
+			-e IS_PERSISTENT=TRUE -e ANONYMIZED_TELEMETRY=FALSE \
+			chromadb/chroma:0.5.15
+
+stop:
+	@mkdir -p $(RUN_DIR)
+	@for name in frontend backend; do \
+		pidfile=$(RUN_DIR)/$$name.pid; \
+		if [ -f $$pidfile ]; then \
+			pid=$$(cat $$pidfile); \
+			if kill -0 $$pid 2>/dev/null; then \
+				echo "Stopping $$name (PID $$pid)..."; \
+				kill $$pid 2>/dev/null || true; \
+			fi; \
+			rm -f $$pidfile; \
+		fi; \
+	done
+	@for port in $(BACKEND_PORT) $(FRONTEND_PORT); do \
+		pids=$$(lsof -ti :$$port 2>/dev/null || true); \
+		if [ -n "$$pids" ]; then \
+			echo "Killing processes on port $$port: $$pids"; \
+			kill $$pids 2>/dev/null || true; \
+		fi; \
+	done
+	@echo "Stopped (Chroma container left running)."
+
+restart: stop dev
+
+logs-backend:
+	@tail -f $(RUN_DIR)/backend.log
+
+logs-frontend:
+	@tail -f $(RUN_DIR)/frontend.log
+
+docker-build:
+	@$(COMPOSE) build
+
+docker-up: env setup-data
+	@$(COMPOSE) up -d
+	@echo ""
+	@echo "Waiting for services to become healthy..."
+	@for i in $$(seq 1 90); do \
+		if [ "$$($(COMPOSE) ps --format json 2>/dev/null | grep -c '"Health":"starting"' || true)" = "0" ]; then \
+			break; \
+		fi; \
+		sleep 2; \
+	done
+	@$(COMPOSE) ps
+	@echo ""
+	@echo "==================================================="
+	@echo "  Frontend: http://localhost:$(FRONTEND_PORT)"
+	@echo "  Backend:  http://localhost:$(BACKEND_PORT)"
+	@echo "  API Docs: http://localhost:$(BACKEND_PORT)/docs"
+	@echo "  Chroma:   http://localhost:$(CHROMA_PORT)"
+	@echo "  Redis:    localhost:$(REDIS_PORT)"
+	@echo "  Ollama:   http://localhost:$(OLLAMA_PORT)"
+	@echo "==================================================="
+
+docker-down:
+	@$(COMPOSE) down
+
+docker-restart: docker-down docker-build docker-up
+
+docker-logs:
+	@$(COMPOSE) logs -f
+
+docker-ps:
+	@$(COMPOSE) ps
+
+docker-shell-backend:
+	@docker exec -it rag-backend /bin/bash
+
+docker-shell-frontend:
+	@docker exec -it rag-frontend /bin/sh
+
+ollama-pull:
+	@docker exec -it rag-ollama ollama pull nomic-embed-text
+
+ollama-shell:
+	@docker exec -it rag-ollama /bin/sh
+health:
+	@echo "Backend:"
+	@curl -sf http://localhost:$(BACKEND_PORT)/api/health && echo "" || echo "  unreachable"
+	@echo ""
+	@echo "Chroma:"
+	@curl -sf http://localhost:$(CHROMA_PORT)/api/v1/heartbeat && echo "" || echo "  unreachable"
+	@echo ""
+	@echo "Ollama:"
+	@curl -sf http://localhost:$(OLLAMA_PORT)/api/tags >/dev/null && echo "  reachable" || echo "  unreachable"
+	@echo ""
+	@echo "Redis:"
+	@docker exec rag-redis redis-cli ping 2>/dev/null || echo "  unreachable (or not in Docker)"
+	@echo ""
+	@echo "Frontend:"
+	@curl -sf -o /dev/null -w "  HTTP %{http_code}\n" http://localhost:$(FRONTEND_PORT) || echo "  unreachable"
+
+test: test-backend
+
+test-backend:
+	@cd backend && . venv/bin/activate && pytest -v
+
+clean:
+	@find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
+	@find . -type f -name "*.pyc" -delete 2>/dev/null || true
+	@rm -rf backend/.pytest_cache frontend/.next frontend/out .run
+	@echo "Cleaned caches, build artifacts, and .run/."
+
+clean-data:
+	@rm -rf backend/data/uploads/* backend/data/parsed/* backend/data/chroma/* backend/data/bm25/*
+	@echo "Cleaned backend/data contents (uploads, parsed, chroma, bm25)."
+
+nuke: docker-down stop clean clean-data
+	@rm -rf backend/venv frontend/node_modules .env
+	@echo "Removed backend/venv, frontend/node_modules, and .env."
