@@ -22,21 +22,21 @@ My name is **Shubankar**. Thank you for opening this README. This project is a s
 
 It is built to be **accurate**: answers are grounded in the documents users upload. If the context does not contain the answer, the assistant says so.
 
-If you have five minutes, skim the sections below in order. If you have thirty seconds, jump straight to [Key Architectural Decisions](#-key-architectural-decisions) and [Why this is production-ready](#-why-this-is-production-ready).
+If you have five minutes, skim the sections below in order. If you have thirty seconds, jump straight to [Key Architectural Decisions](#key-architectural-decisions) and [Why this is production-ready](#why-this-is-production-ready).
 
 ---
 
 ## Contents
 
-1. [Chosen Theme](#-chosen-theme)
-2. [Functional Requirements Satisfied](#-functional-requirements-satisfied)
-3. [Features Added for Better User Experience](#-features-added-for-better-user-experience)
-4. [Key Architectural Decisions](#-key-architectural-decisions)
-5. [Important Modules](#-important-modules)
-6. [Data Flow, in Plain Language](#-data-flow-in-plain-language)
-7. [Why This Is Production-Ready](#-why-this-is-production-ready)
-8. [How to Run](#-how-to-run)
-9. [Thank You](#-thank-you)
+1. [Chosen Theme](#chosen-theme)
+2. [Functional Requirements Satisfied](#functional-requirements-satisfied)
+3. [Features Added for Better User Experience](#features-added-for-better-user-experience)
+4. [Key Architectural Decisions](#key-architectural-decisions)
+5. [Important Modules](#important-modules)
+6. [Data Flow, in Plain Language](#data-flow-in-plain-language)
+7. [Why This Is Production-Ready](#why-this-is-production-ready)
+8. [How to Run](#how-to-run)
+9. [Thank You](#thank-you)
 
 ---
 
