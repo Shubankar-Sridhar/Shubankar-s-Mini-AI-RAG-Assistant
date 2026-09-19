@@ -36,7 +36,6 @@ If you have five minutes, skim the sections below in order. If you have thirty s
 6. [Data Flow, in Plain Language](#data-flow-in-plain-language)
 7. [Why This Is Production-Ready](#why-this-is-production-ready)
 8. [How to Run](#how-to-run)
-9. [Thank You](#thank-you)
 
 ---
 
@@ -308,8 +307,9 @@ Each module has a single responsibility. `retriever.py` can be tested without sp
 ### With Docker (recommended)
 
 ```bash
-git clone <repo-url>
-cd <repo>
+git clone https://github.com/Shubankar-Sridhar/Shubankar-s-Mini-AI-RAG-Assistant.git
+cd Shubankar-s-Mini-AI-RAG-Assistant
+cp .env.example .env
 docker compose -f docker/docker-compose.yml up -d --build
 ```
 
@@ -320,10 +320,11 @@ First run takes 5-10 minutes while Docker pulls images and downloads the embeddi
 
 Without Docker (local development)
 ```bash
-git clone <repo-url>
-cd <repo>
-make setup
-make dev
+git clone https://github.com/Shubankar-Sridhar/Shubankar-s-Mini-AI-RAG-Assistant.git
+cd Shubankar-s-Mini-AI-RAG-Assistant
+make setup        
+make dev-chroma   
+make dev          
 ```
 Requires Python 3.11, Node.js 20, Java 11+, and a Redis instance. See the Makefile's help target for all commands.
 
